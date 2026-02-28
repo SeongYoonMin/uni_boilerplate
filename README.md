@@ -282,14 +282,159 @@ npx shadcn@latest add [component-name]  # 추가 설치
 | 9   | DB 패턴          | Prisma CRUD, 관계형 쿼리, 페이지네이션, 트랜잭션 |
 | 10  | 상태 관리        | Zustand 스토어, persist, immer, React Query 연동 |
 
-Claude Code 슬래시 커맨드:
+---
 
-| 커맨드                       | 설명                            |
-| ---------------------------- | ------------------------------- |
-| `/project:new-component`     | 컴포넌트 생성                   |
-| `/project:new-page`          | 페이지 + 레이아웃 생성          |
-| `/project:new-service`       | 서비스 + React Query 훅 쌍 생성 |
-| `/project:new-store`         | Zustand 스토어 생성             |
-| `/project:new-auth-page`     | 로그인 / 회원가입 페이지 생성   |
-| `/project:new-sheet-service` | Google Sheets 서비스 + 폼 생성  |
-| `/project:review`            | 변경사항 코드 리뷰              |
+## Claude Code 설정
+
+이 보일러플레이트는 Claude Code(AI 코딩 어시스턴트)와의 협업을 위한 설정이 포함되어 있습니다.
+
+```
+CLAUDE.md                        ← 프로젝트 컨텍스트 (스택·컨벤션·패턴)
+.claude/
+  commands/                      ← 슬래시 커맨드 (코드 생성 자동화)
+  agents/                        ← 서브에이전트 (작업별 전문 AI)
+```
+
+---
+
+### 슬래시 커맨드
+
+Claude Code 채팅창에서 `/project:커맨드명 인자` 형식으로 실행합니다.
+
+#### `/project:new-component` — 컴포넌트 생성
+
+```
+/project:new-component [위치/]ComponentName [설명]
+```
+
+| 예시                                                     | 생성 파일                            |
+| -------------------------------------------------------- | ------------------------------------ |
+| `/project:new-component Button`                          | `components/common/Button.tsx`       |
+| `/project:new-component common/Modal 모달 다이얼로그`    | `components/common/Modal.tsx`        |
+| `/project:new-component content/HeroSection 메인 히어로` | `components/content/HeroSection.tsx` |
+
+위치를 생략하면 `components/common/`에 생성됩니다.
+
+---
+
+#### `/project:new-page` — 페이지 생성
+
+```
+/project:new-page route-path [설명]
+```
+
+| 예시                                        | 생성 파일                                |
+| ------------------------------------------- | ---------------------------------------- |
+| `/project:new-page about`                   | `app/about/page.tsx`                     |
+| `/project:new-page contact 문의 페이지`     | `app/contact/page.tsx` + `layout.tsx`    |
+| `/project:new-page blog/[slug] 블로그 상세` | `app/blog/[slug]/page.tsx` (동적 라우트) |
+
+---
+
+#### `/project:new-service` — 서비스 + React Query 훅 쌍 생성
+
+```
+/project:new-service method ResourceName [설명]
+```
+
+`method`는 `get` | `post` | `put` | `patch` | `delete`.
+
+| 예시                                          | 생성 파일                                                                   |
+| --------------------------------------------- | --------------------------------------------------------------------------- |
+| `/project:new-service get Contact`            | `service/getContact.ts` + `hooks/api/useGetContact.ts` + `types/contact.ts` |
+| `/project:new-service post Contact 문의 제출` | `service/postContact.ts` + `hooks/api/usePostContact.ts`                    |
+
+GET은 `useQuery`, 나머지는 `useMutation` + `invalidateQueries` 패턴으로 생성됩니다.
+
+---
+
+#### `/project:new-hook` — 커스텀 훅 생성
+
+```
+/project:new-hook hookName [설명]
+```
+
+| 예시                                          | 생성 파일              |
+| --------------------------------------------- | ---------------------- |
+| `/project:new-hook useModal`                  | `hooks/useModal.ts`    |
+| `/project:new-hook useDebounce 디바운스 처리` | `hooks/useDebounce.ts` |
+
+API 관련 훅(useGet~, usePost~)은 `hooks/api/`에, 일반 훅은 `hooks/`에 생성됩니다.
+
+---
+
+#### `/project:new-store` — Zustand 스토어 생성
+
+```
+/project:new-store storeName [설명]
+```
+
+| 예시                                       | 생성 파일                                     |
+| ------------------------------------------ | --------------------------------------------- |
+| `/project:new-store cart`                  | `store/cart.store.ts`                         |
+| `/project:new-store user 로그인 상태 유지` | `store/user.store.ts` (persist 미들웨어 포함) |
+
+"로그인 상태 유지", "새로고침 후에도 유지" 등의 설명이 있으면 `persist` 미들웨어가 자동 적용됩니다.
+
+---
+
+#### `/project:new-auth-page` — 인증 페이지 생성
+
+```
+/project:new-auth-page login | signup | both
+```
+
+| 예시                            | 생성 파일                                           |
+| ------------------------------- | --------------------------------------------------- |
+| `/project:new-auth-page login`  | `app/login/page.tsx` + `app/login/LoginForm.tsx`    |
+| `/project:new-auth-page signup` | `app/signup/page.tsx` + `app/signup/SignupForm.tsx` |
+| `/project:new-auth-page both`   | 로그인 + 회원가입 모두 생성                         |
+
+Google OAuth 버튼 + 이메일/비밀번호 폼이 포함된 shadcn/ui 기반 카드 레이아웃으로 생성됩니다.
+
+---
+
+#### `/project:new-sheet-service` — Google Sheets 서비스 + 폼 생성
+
+```
+/project:new-sheet-service SheetName 헤더1,헤더2,...
+```
+
+| 예시                                                    | 생성 파일                                                       |
+| ------------------------------------------------------- | --------------------------------------------------------------- |
+| `/project:new-sheet-service Contact name,email,message` | `types/contact.ts` + `components/content/ContactForm.tsx`       |
+| `/project:new-sheet-service Newsletter email,createdAt` | `types/newsletter.ts` + `components/content/NewsletterForm.tsx` |
+
+스프레드시트 첫 번째 행 헤더 순서와 인자의 헤더 순서를 일치시켜야 합니다.
+
+---
+
+#### `/project:review` — 코드 리뷰
+
+```
+/project:review                              # git 변경사항 전체 리뷰
+/project:review components/common/Button.tsx # 특정 파일 리뷰
+```
+
+프로젝트 컨벤션(파일 위치, 네이밍, `use client` 여부, Axios 인스턴스, 타입 정의, 보안 등)을 기준으로 리뷰 결과를 ✅ / ⚠️ / 🔴 형식으로 출력합니다.
+
+---
+
+### 서브에이전트
+
+Claude Code가 복잡한 작업을 할 때 자동으로 호출하는 전문 에이전트입니다. 직접 호출할 수도 있습니다.
+
+| 에이전트             | 파일                                   | 언제 사용                                                   |
+| -------------------- | -------------------------------------- | ----------------------------------------------------------- |
+| `component-builder`  | `.claude/agents/component-builder.md`  | UI 컴포넌트 생성·수정, TailwindCSS 스타일링, shadcn/ui 활용 |
+| `api-integrator`     | `.claude/agents/api-integrator.md`     | 서비스 함수, React Query 훅, Zustand 연결, 데이터 흐름 전반 |
+| `auth-specialist`    | `.claude/agents/auth-specialist.md`    | Auth.js v5, 세션 처리, 보호 라우트, JWT 콜백, RBAC          |
+| `storage-specialist` | `.claude/agents/storage-specialist.md` | AWS S3 업로드, CloudFront CDN, Google Sheets CRUD           |
+| `type-definer`       | `.claude/agents/type-definer.md`       | TypeScript 타입·인터페이스 정의, API 응답 타입 추론         |
+
+**예시 — 직접 에이전트 지정:**
+
+```
+"api-integrator를 사용해서 상품 목록 조회 기능 구현해줘"
+"storage-specialist로 이미지 업로드 폼 만들어줘"
+```
