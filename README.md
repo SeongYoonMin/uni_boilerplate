@@ -228,11 +228,18 @@ npx shadcn@latest add [component-name]  # 추가 설치
 
 자세한 패턴과 예시 코드는 **`SKILL.md`** 를 참고하세요.
 
-- 메인 페이지 구성
-- Auth 플로우 (로그인, 회원가입, 세션, RBAC)
-- S3 파일 업로드 + CloudFront CDN
-- Google Sheets 데이터 처리
-- Vercel / AWS 배포
+| #   | 섹션             | 주요 내용                                        |
+| --- | ---------------- | ------------------------------------------------ |
+| 1   | 환경 설정        | 첫 시작, 유용한 명령어, Supabase 연결            |
+| 2   | 메인 페이지 구성 | 페이지·레이아웃 구조, shadcn/ui 활용             |
+| 3   | Auth 플로우      | 로그인, 회원가입, 세션 사용, 보호 라우트, RBAC   |
+| 4   | AWS S3 & CDN     | Presigned URL 업로드, 서버 업로드, 삭제          |
+| 5   | Google Sheets    | 데이터 조회·추가, API Route 활용                 |
+| 6   | 배포             | Vercel, AWS Docker, PM2, 환경변수 설정           |
+| 7   | 데이터 패칭      | Axios, useQuery, useMutation, Optimistic Update  |
+| 8   | 폼 처리          | react-hook-form + zod, 파일 업로드 폼            |
+| 9   | DB 패턴          | Prisma CRUD, 관계형 쿼리, 페이지네이션, 트랜잭션 |
+| 10  | 상태 관리        | Zustand 스토어, persist, immer, React Query 연동 |
 
 Claude Code 슬래시 커맨드:
 
