@@ -146,6 +146,142 @@ import { useSession } from "@/hooks/auth/useSession";
 const { user, isAuthenticated, login, logout } = useSession();
 ```
 
+### Prisma DB 패턴
+
+```ts
+// 항상 @/lib/prisma 에서 import
+import prisma from "@/lib/prisma";
+
+// CRUD
+await prisma.user.create({ data: { name, email } });
+await prisma.user.findUnique({ where: { id }, select: { id: true, name: true } });
+await prisma.user.findMany({ where: { role }, orderBy: { createdAt: "desc" } });
+await prisma.user.update({ where: { id }, data: { role: "admin" } });
+await prisma.user.delete({ where: { id } });
+
+// 관계 포함 조회
+await prisma.user.findUnique({ where: { id }, include: { accounts: true } });
+
+// 트랜잭션
+await prisma.$transaction([
+  prisma.user.update({ where: { id }, data: { role: "admin" } }),
+  prisma.auditLog.create({ data: { userId: id, action: "PROMOTE" } }),
+]);
+```
+
+> **Prisma 7 주의**: `lib/generated/prisma/client` 에서 자동 생성. `prisma.config.ts`에서 `DATABASE_URL` 관리. `prisma migrate dev`는 Direct URL 필요.
+
+### React Query 패턴
+
+```ts
+// hooks/api/useGetItems.ts
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import axiosInstance from "@/lib/axios";
+
+export const useGetItems = (params?: Record<string, string>) =>
+  useQuery({
+    queryKey: ["items", params],
+    queryFn: async () => {
+      const { data } = await axiosInstance.get("/items", { params });
+      return data;
+    },
+    staleTime: 1000 * 60,
+  });
+
+export const useCreateItem = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: unknown) => {
+      const { data } = await axiosInstance.post("/items", body);
+      return data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["items"] }),
+  });
+};
+```
+
+### Zustand 스토어 패턴
+
+```ts
+// store/example.store.ts
+import { create } from "zustand";
+
+interface ExampleState {
+  value: string | null;
+  setValue: (value: string) => void;
+  clearValue: () => void;
+}
+
+export const useExampleStore = create<ExampleState>((set) => ({
+  value: null,
+  setValue: (value) => set({ value }),
+  clearValue: () => set({ value: null }),
+}));
+
+// 컴포넌트에서 — 필요한 상태만 선택 구독 (불필요한 리렌더링 방지)
+const value = useExampleStore((s) => s.value);
+const setValue = useExampleStore((s) => s.setValue);
+```
+
+> **상태 분리 원칙**: 서버 데이터(API 응답)는 React Query, UI·설정·일시적 상태는 Zustand.
+
+### 폼 처리 패턴
+
+```tsx
+// react-hook-form + zod + shadcn Form
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import {
+  Form,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormControl,
+  FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+
+const schema = z.object({ email: z.string().email(), password: z.string().min(8) });
+type FormData = z.infer<typeof schema>;
+
+export default function ExampleForm() {
+  const form = useForm<FormData>({ resolver: zodResolver(schema) });
+
+  const onSubmit = async (data: FormData) => {
+    try {
+      await someAction(data);
+    } catch {
+      form.setError("email", { message: "서버 에러 메시지" });
+    }
+  };
+
+  return (
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)}>
+        <FormField
+          control={form.control}
+          name="email"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>이메일</FormLabel>
+              <FormControl>
+                <Input {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <Button type="submit" disabled={form.formState.isSubmitting}>
+          제출
+        </Button>
+      </form>
+    </Form>
+  );
+}
+```
+
 ### 타입 패턴
 
 ```ts
@@ -206,3 +342,20 @@ pm2 start ecosystem.config.js  # EC2 직접 배포
 - `GOOGLE_PRIVATE_KEY` 는 `\n`이 이스케이프된 형태로 저장, `lib/googleSheets.ts`에서 자동 복원
 - Google Sheets 스프레드시트 첫 번째 행이 헤더 역할
 - `next.config.ts`의 `output: "standalone"` 은 Vercel 배포 시 무시됨 (공존 가능)
+
+## 개발 가이드 참조 (SKILL.md)
+
+패턴별 상세 예시는 `SKILL.md`를 참고합니다.
+
+| #   | 섹션             | 주요 내용                                        |
+| --- | ---------------- | ------------------------------------------------ |
+| 1   | 환경 설정        | 첫 시작, 명령어, Supabase 연결                   |
+| 2   | 메인 페이지 구성 | 페이지·레이아웃, shadcn/ui 활용                  |
+| 3   | Auth 플로우      | 로그인, 회원가입, 세션, 보호 라우트, RBAC        |
+| 4   | AWS S3 & CDN     | Presigned URL, 서버 업로드, 삭제                 |
+| 5   | Google Sheets    | 데이터 조회·추가, API Route                      |
+| 6   | 배포             | Vercel, Docker, PM2, 환경변수                    |
+| 7   | 데이터 패칭      | Axios, useQuery, useMutation, Optimistic Update  |
+| 8   | 폼 처리          | react-hook-form + zod, 파일 업로드 폼            |
+| 9   | DB 패턴          | Prisma CRUD, 관계형 쿼리, 페이지네이션, 트랜잭션 |
+| 10  | 상태 관리        | Zustand 스토어, persist, immer, React Query 연동 |
