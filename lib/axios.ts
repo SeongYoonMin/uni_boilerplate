@@ -2,10 +2,10 @@
  * Custom Axios
  */
 
-import axios from 'axios';
+import axios from "axios";
 
 const axiosInstance = axios.create({
-  baseURL: process.env.BASE_URL
-})
+  baseURL: process.env.BASE_URL,
+});
 
 export default axiosInstance;

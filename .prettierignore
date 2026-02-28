@@ -1,0 +1,17 @@
+# 빌드 산출물
+.next/
+out/
+build/
+dist/
+
+# 패키지
+node_modules/
+
+# Prisma 자동생성
+lib/generated/
+
+# 설정 파일
+package-lock.json
+
+# 정적 파일
+public/

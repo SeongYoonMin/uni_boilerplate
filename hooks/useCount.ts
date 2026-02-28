@@ -9,4 +9,4 @@ export const useCount = (initialValue: number = 0) => {
   const set = useCallback((value: number) => setCount(value), []);
 
   return { count, increment, decrement, reset, set };
-}
+};
