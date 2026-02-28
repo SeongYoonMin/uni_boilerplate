@@ -975,9 +975,628 @@ server {
 
 ---
 
+---
+
+## 7. 데이터 패칭 패턴
+
+### 7-1 Axios 인스턴스
+
+모든 API 호출은 `@/lib/axios`의 커스텀 인스턴스를 사용합니다.
+(`axios` 직접 import 금지 — S3 presigned URL PUT 업로드만 예외)
+
+```ts
+// lib/axios.ts — baseURL, 인터셉터 등 공통 설정
+import axios from "axios";
+
+const axiosInstance = axios.create({
+  baseURL: process.env.BASE_URL,
+});
+
+// 요청 인터셉터 예시 (Authorization 헤더 자동 주입)
+axiosInstance.interceptors.request.use((config) => {
+  // 필요 시 토큰 주입
+  return config;
+});
+
+// 응답 인터셉터 예시 (공통 에러 처리)
+axiosInstance.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // 인증 만료 처리
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default axiosInstance;
+```
+
+### 7-2 서비스 함수
+
+`service/` 폴더에 Axios 호출을 캡슐화합니다.
+
+```ts
+// service/getProducts.ts
+import axiosInstance from "@/lib/axios";
+import { IProductsResponse } from "@/types/product";
+
+// GET — 목록 조회
+export const getProducts = async () => {
+  const response = await axiosInstance({ method: "GET", url: "/products" });
+  return response.data as IProductsResponse[];
+};
+
+// GET — 단건 조회 (파라미터)
+export const getProduct = async (id: number) => {
+  const response = await axiosInstance({ method: "GET", url: `/products/${id}` });
+  return response.data as IProductsResponse;
+};
+
+// POST — 생성
+export const postProduct = async (data: IProductRequest) => {
+  const response = await axiosInstance({ method: "POST", url: "/products", data });
+  return response.data as IProductsResponse;
+};
+
+// PUT — 수정
+export const putProduct = async (id: number, data: IProductRequest) => {
+  const response = await axiosInstance({ method: "PUT", url: `/products/${id}`, data });
+  return response.data as IProductsResponse;
+};
+
+// DELETE — 삭제
+export const deleteProduct = async (id: number) => {
+  await axiosInstance({ method: "DELETE", url: `/products/${id}` });
+};
+```
+
+### 7-3 useQuery — 데이터 조회
+
+```ts
+// hooks/api/useGetProducts.ts
+import { useQuery } from "@tanstack/react-query";
+import { getProducts } from "@/service/getProducts";
+
+export const useGetProducts = () => {
+  return useQuery({
+    queryKey: ["products"],
+    queryFn: getProducts,
+    staleTime: 1000 * 60 * 5, // 5분간 fresh 유지
+  });
+};
+```
+
+**파라미터가 있는 쿼리:**
+
+```ts
+// hooks/api/useGetProduct.ts
+export const useGetProduct = (id: number) => {
+  return useQuery({
+    queryKey: ["products", id], // id가 바뀌면 자동 재조회
+    queryFn: () => getProduct(id),
+    enabled: !!id, // id가 없으면 실행 안 함
+  });
+};
+```
+
+**컴포넌트에서 사용:**
+
+```tsx
+"use client";
+
+import { useGetProducts } from "@/hooks/api/useGetProducts";
+
+export default function ProductList() {
+  const { data, isLoading, isError, error } = useGetProducts();
+
+  if (isLoading) return <div>로딩 중...</div>;
+  if (isError) return <div>오류: {(error as Error).message}</div>;
+
+  return (
+    <ul>
+      {data?.map((product) => (
+        <li key={product.id}>{product.name}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+### 7-4 useMutation — 데이터 변경
+
+```ts
+// hooks/api/usePostProduct.ts
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { postProduct } from "@/service/postProduct";
+import { toast } from "sonner";
+
+export const usePostProduct = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: postProduct,
+    onSuccess: () => {
+      // 성공 후 목록 쿼리 무효화 → 자동 재조회
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      toast.success("상품이 등록되었습니다.");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message ?? "오류가 발생했습니다.");
+    },
+  });
+};
+```
+
+**컴포넌트에서 사용:**
+
+```tsx
+"use client";
+
+import { usePostProduct } from "@/hooks/api/usePostProduct";
+
+export default function ProductForm() {
+  const { mutate: createProduct, isPending } = usePostProduct();
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    createProduct({ name: fd.get("name") as string });
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input name="name" placeholder="상품명" required />
+      <button type="submit" disabled={isPending}>
+        {isPending ? "등록 중..." : "등록"}
+      </button>
+    </form>
+  );
+}
+```
+
+### 7-5 낙관적 업데이트
+
+서버 응답을 기다리지 않고 UI를 먼저 업데이트해 빠른 반응성을 줍니다.
+
+```ts
+// hooks/api/useDeleteProduct.ts
+export const useDeleteProduct = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: deleteProduct,
+    onMutate: async (deletedId: number) => {
+      // 진행 중인 refetch 취소
+      await queryClient.cancelQueries({ queryKey: ["products"] });
+
+      // 현재 데이터 스냅샷 저장 (롤백용)
+      const previous = queryClient.getQueryData<IProductsResponse[]>(["products"]);
+
+      // 낙관적으로 캐시 업데이트
+      queryClient.setQueryData<IProductsResponse[]>(
+        ["products"],
+        (old) => old?.filter((p) => p.id !== deletedId) ?? []
+      );
+
+      return { previous };
+    },
+    onError: (_err, _id, context) => {
+      // 실패 시 롤백
+      queryClient.setQueryData(["products"], context?.previous);
+      toast.error("삭제에 실패했습니다.");
+    },
+    onSettled: () => {
+      // 완료 후 서버 데이터로 동기화
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+    },
+  });
+};
+```
+
+### 7-6 서버 컴포넌트에서 직접 조회
+
+서버 컴포넌트에서는 React Query 훅 없이 서비스 함수 또는 Prisma를 직접 호출합니다.
+
+```tsx
+// app/products/page.tsx (서버 컴포넌트)
+import prisma from "@/lib/prisma";
+
+export default async function ProductsPage() {
+  // Prisma 직접 호출
+  const products = await prisma.product.findMany({
+    orderBy: { createdAt: "desc" },
+  });
+
+  // 또는 외부 API 서비스 함수 호출
+  // const products = await getProducts();
+
+  return <ProductList initialData={products} />;
+}
+```
+
+### 7-7 QueryKey 관리 전략
+
+QueryKey가 많아지면 상수로 관리하면 편리합니다.
+
+```ts
+// lib/queryKeys.ts
+export const queryKeys = {
+  products: {
+    all: ["products"] as const,
+    detail: (id: number) => ["products", id] as const,
+    byCategory: (category: string) => ["products", "category", category] as const,
+  },
+  users: {
+    all: ["users"] as const,
+    me: ["users", "me"] as const,
+  },
+};
+
+// 사용 예
+queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+```
+
+---
+
+## 8. 폼 처리 (react-hook-form + zod)
+
+### 8-1 기본 패턴
+
+```ts
+// types/product.ts — zod 스키마 + TypeScript 타입 함께 관리
+import { z } from "zod";
+
+export const productSchema = z.object({
+  name: z.string().min(1, "상품명을 입력해 주세요.").max(50, "50자 이하로 입력해 주세요."),
+  price: z.coerce.number().min(0, "가격은 0 이상이어야 합니다."),
+  description: z.string().optional(),
+});
+
+export type ProductFormData = z.infer<typeof productSchema>;
+```
+
+```tsx
+// components/content/ProductForm.tsx
+"use client";
+
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { productSchema, type ProductFormData } from "@/types/product";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { usePostProduct } from "@/hooks/api/usePostProduct";
+
+export default function ProductForm() {
+  const { mutate: createProduct, isPending } = usePostProduct();
+
+  const form = useForm<ProductFormData>({
+    resolver: zodResolver(productSchema),
+    defaultValues: { name: "", price: 0, description: "" },
+  });
+
+  const onSubmit = (data: ProductFormData) => {
+    createProduct(data, {
+      onSuccess: () => form.reset(),
+    });
+  };
+
+  return (
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <FormField
+          control={form.control}
+          name="name"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>상품명</FormLabel>
+              <FormControl>
+                <Input placeholder="상품명을 입력하세요" {...field} />
+              </FormControl>
+              <FormMessage /> {/* 유효성 검사 오류 자동 표시 */}
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="price"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>가격</FormLabel>
+              <FormControl>
+                <Input type="number" placeholder="0" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <Button type="submit" disabled={isPending} className="w-full">
+          {isPending ? "등록 중..." : "상품 등록"}
+        </Button>
+      </form>
+    </Form>
+  );
+}
+```
+
+### 8-2 자주 쓰는 zod 검증 패턴
+
+```ts
+import { z } from "zod";
+
+const formSchema = z
+  .object({
+    // 문자열
+    name: z.string().min(2, "2자 이상 입력해 주세요.").max(20),
+
+    // 이메일
+    email: z.string().email("올바른 이메일 형식이 아닙니다."),
+
+    // 비밀번호 (영문+숫자 8자 이상)
+    password: z
+      .string()
+      .min(8, "비밀번호는 8자 이상이어야 합니다.")
+      .regex(/[A-Za-z]/, "영문자를 포함해야 합니다.")
+      .regex(/[0-9]/, "숫자를 포함해야 합니다."),
+
+    // 비밀번호 확인
+    confirmPassword: z.string(),
+
+    // 숫자 (문자열 입력을 숫자로 변환)
+    age: z.coerce.number().min(1).max(120),
+
+    // 선택 필드
+    phone: z.string().optional(),
+
+    // 빈 문자열 허용 (선택 필드)
+    website: z.string().url("올바른 URL 형식이 아닙니다.").or(z.literal("")),
+
+    // 체크박스
+    agree: z.boolean().refine((v) => v, "약관에 동의해야 합니다."),
+  })
+  // 두 필드 간 비교 (refine)
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "비밀번호가 일치하지 않습니다.",
+    path: ["confirmPassword"],
+  });
+```
+
+### 8-3 로그인 폼 (실전 예시)
+
+```tsx
+// app/login/LoginForm.tsx
+"use client";
+
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { signIn } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { toast } from "sonner";
+
+const loginSchema = z.object({
+  email: z.string().email("올바른 이메일 형식이 아닙니다."),
+  password: z.string().min(1, "비밀번호를 입력해 주세요."),
+});
+
+type LoginFormData = z.infer<typeof loginSchema>;
+
+export default function LoginForm() {
+  const router = useRouter();
+  const form = useForm<LoginFormData>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { email: "", password: "" },
+  });
+
+  const onSubmit = async (data: LoginFormData) => {
+    const result = await signIn("credentials", { ...data, redirect: false });
+
+    if (result?.error) {
+      // 서버 에러를 특정 필드에 표시
+      form.setError("email", { message: "이메일 또는 비밀번호가 올바르지 않습니다." });
+      return;
+    }
+
+    toast.success("로그인되었습니다.");
+    router.push("/");
+  };
+
+  return (
+    <Card className="w-full max-w-md">
+      <CardHeader>
+        <CardTitle className="text-2xl">로그인</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="email"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>이메일</FormLabel>
+                  <FormControl>
+                    <Input type="email" placeholder="example@email.com" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="password"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>비밀번호</FormLabel>
+                  <FormControl>
+                    <Input type="password" placeholder="비밀번호 입력" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
+              {form.formState.isSubmitting ? "로그인 중..." : "로그인"}
+            </Button>
+          </form>
+        </Form>
+      </CardContent>
+    </Card>
+  );
+}
+```
+
+### 8-4 파일 업로드 폼 (S3 연동)
+
+```tsx
+"use client";
+
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { useUploadS3 } from "@/hooks/api/useUploadS3";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { toast } from "sonner";
+
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+const uploadSchema = z.object({
+  title: z.string().min(1, "제목을 입력해 주세요."),
+  image: z
+    .instanceof(FileList)
+    .refine((files) => files.length > 0, "이미지를 선택해 주세요.")
+    .refine((files) => files[0]?.size <= MAX_FILE_SIZE, "5MB 이하 파일만 업로드 가능합니다.")
+    .refine(
+      (files) => ACCEPTED_TYPES.includes(files[0]?.type),
+      "JPG, PNG, WEBP 형식만 지원합니다."
+    ),
+});
+
+type UploadFormData = z.infer<typeof uploadSchema>;
+
+export default function ImageUploadForm() {
+  const { mutateAsync: upload, isPending: isUploading } = useUploadS3();
+  const form = useForm<UploadFormData>({ resolver: zodResolver(uploadSchema) });
+
+  const onSubmit = async (data: UploadFormData) => {
+    const file = data.image[0];
+    const { cdnUrl } = await upload({ file, options: { folder: "images" } });
+
+    // cdnUrl을 DB에 저장하거나 상태에 반영
+    toast.success(`업로드 완료: ${cdnUrl}`);
+    form.reset();
+  };
+
+  return (
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <FormField
+          control={form.control}
+          name="title"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>제목</FormLabel>
+              <FormControl>
+                <Input placeholder="이미지 제목" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="image"
+          render={({ field: { onChange, ...field } }) => (
+            <FormItem>
+              <FormLabel>이미지</FormLabel>
+              <FormControl>
+                <Input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={(e) => onChange(e.target.files)}
+                  {...field}
+                  value={undefined}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <Button type="submit" disabled={isUploading} className="w-full">
+          {isUploading ? "업로드 중..." : "업로드"}
+        </Button>
+      </form>
+    </Form>
+  );
+}
+```
+
+### 8-5 useFormState 활용 (폼 상태 전체 접근)
+
+```tsx
+const form = useForm<FormData>({ resolver: zodResolver(schema) });
+
+const {
+  formState: {
+    errors, // 필드별 에러 객체
+    isSubmitting, // 제출 중 여부 (async onSubmit 지원)
+    isValid, // 전체 유효성
+    isDirty, // 초기값 대비 변경 여부
+    dirtyFields, // 변경된 필드 목록
+  },
+  watch, // 필드 값 실시간 감시
+  setValue, // 프로그래밍 방식 값 설정
+  trigger, // 특정 필드 수동 검증
+  reset, // 폼 초기화
+  setError, // 서버 에러 등 외부 에러 주입
+} = form;
+
+// 특정 필드 감시
+const password = watch("password");
+
+// 프로그래밍 방식으로 값 설정 (예: 외부 데이터 불러오기)
+useEffect(() => {
+  if (serverData) {
+    setValue("name", serverData.name);
+    setValue("email", serverData.email);
+  }
+}, [serverData, setValue]);
+```
+
+---
+
 ## 추가 예정
 
-- `7. 데이터 패칭 패턴` — Axios 서비스, React Query 훅, 낙관적 업데이트
-- `8. 폼 처리` — react-hook-form + zod 유효성 검사
 - `9. DB 패턴` — Prisma CRUD, 관계형 쿼리
 - `10. 상태 관리` — Zustand 스토어 패턴
