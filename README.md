@@ -25,6 +25,47 @@
 
 ---
 
+## 새 프로젝트에서 사용하는 방법
+
+### 방법 1: GitHub Template (권장)
+
+**1회 설정** — GitHub 레포 → **Settings** → **"Template repository"** 체크박스 활성화
+
+이후 새 프로젝트를 시작할 때마다:
+
+1. 레포 페이지 → **"Use this template"** → **"Create a new repository"**
+2. 레포 이름 입력 후 생성 (git 히스토리가 초기화된 새 레포가 만들어집니다)
+3. 로컬에 clone
+
+```bash
+git clone https://github.com/{계정}/{새프로젝트}.git
+cd {새프로젝트}
+```
+
+### 방법 2: degit
+
+GitHub 연동 없이 로컬에서 바로 시작할 때.
+
+```bash
+npx degit SeongYoonMin/uni_boilerplate {새프로젝트명}
+cd {새프로젝트명}
+git init && git add . && git commit -m "init"
+```
+
+### 방법 3: clone + 히스토리 초기화
+
+```bash
+git clone https://github.com/SeongYoonMin/uni_boilerplate.git {새프로젝트명}
+cd {새프로젝트명}
+rm -rf .git
+git init && git add . && git commit -m "init"
+# GitHub에서 새 레포 생성 후
+git remote add origin https://github.com/{계정}/{새프로젝트명}.git
+git push -u origin main
+```
+
+---
+
 ## 빠른 시작
 
 ### 1. 의존성 설치
