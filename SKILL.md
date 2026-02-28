@@ -14,6 +14,36 @@
    - [3-3 세션 사용](#3-3-세션-사용)
    - [3-4 보호된 라우트](#3-4-보호된-라우트)
    - [3-5 Role 기반 접근 제어](#3-5-role-기반-접근-제어)
+4. [AWS S3 파일 업로드 & CDN](#4-aws-s3-파일-업로드--cdn)
+5. [Google Sheets 데이터 연동](#5-google-sheets-데이터-연동)
+6. [배포](#6-배포)
+7. [데이터 패칭 패턴](#7-데이터-패칭-패턴)
+   - [7-1 Axios 인스턴스 & 인터셉터](#7-1-axios-인스턴스--인터셉터)
+   - [7-2 서비스 함수 패턴](#7-2-서비스-함수-패턴)
+   - [7-3 useQuery 기본·심화](#7-3-usequery-기본심화)
+   - [7-4 useMutation 패턴](#7-4-usemutation-패턴)
+   - [7-5 Optimistic Update](#7-5-optimistic-update)
+   - [7-6 서버 컴포넌트에서 직접 호출](#7-6-서버-컴포넌트에서-직접-호출)
+   - [7-7 queryKeys 관리](#7-7-querykeys-관리)
+8. [폼 처리](#8-폼-처리)
+   - [8-1 기본 폼 패턴](#8-1-기본-폼-패턴)
+   - [8-2 Zod 공통 Validator](#8-2-zod-공통-validator)
+   - [8-3 로그인 폼 예시](#8-3-로그인-폼-예시)
+   - [8-4 파일 업로드 폼](#8-4-파일-업로드-폼)
+   - [8-5 useFormState 활용](#8-5-useformstate-활용)
+9. [DB 패턴 — Prisma](#9-db-패턴--prisma)
+   - [9-1 기본 CRUD](#9-1-기본-crud)
+   - [9-2 관계형 쿼리](#9-2-관계형-쿼리)
+   - [9-3 페이지네이션](#9-3-페이지네이션)
+   - [9-4 트랜잭션](#9-4-트랜잭션)
+   - [9-5 API Route에서 Prisma 사용](#9-5-api-route에서-prisma-사용)
+10. [상태 관리 — Zustand](#10-상태-관리--zustand)
+    - [10-1 기본 스토어 패턴](#10-1-기본-스토어-패턴)
+    - [10-2 비동기 액션 패턴](#10-2-비동기-액션-패턴)
+    - [10-3 persist 미들웨어 (로컬 저장)](#10-3-persist-미들웨어-로컬-저장)
+    - [10-4 immer 미들웨어 (불변성 간소화)](#10-4-immer-미들웨어-불변성-간소화)
+    - [10-5 스토어 조합 패턴](#10-5-스토어-조합-패턴)
+    - [10-6 React Query와 함께 사용](#10-6-react-query와-함께-사용)
 
 ---
 
@@ -1596,7 +1626,722 @@ useEffect(() => {
 
 ---
 
-## 추가 예정
+## 9. DB 패턴 — Prisma
 
-- `9. DB 패턴` — Prisma CRUD, 관계형 쿼리
-- `10. 상태 관리` — Zustand 스토어 패턴
+Prisma 7 + Supabase PostgreSQL 기준입니다. `lib/prisma.ts`의 싱글턴 `prisma` 인스턴스를 사용합니다.
+
+> **중요**: Prisma 7은 `PrismaPg` 드라이버 어댑터를 사용합니다. `prisma` 인스턴스는 항상 `@/lib/prisma`에서 import합니다.
+
+### 9-1 기본 CRUD
+
+**Create**
+
+```ts
+// service/createUser.ts
+import prisma from "@/lib/prisma";
+import { ICreateUserRequest } from "@/types/user";
+
+export const createUser = async (data: ICreateUserRequest) => {
+  return prisma.user.create({
+    data: {
+      name: data.name,
+      email: data.email,
+      role: "user",
+    },
+  });
+};
+```
+
+**Read — 단건 조회**
+
+```ts
+// service/getUser.ts
+import prisma from "@/lib/prisma";
+
+export const getUserById = async (id: string) => {
+  return prisma.user.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      createdAt: true,
+    },
+  });
+};
+
+// null 대신 에러를 던지고 싶을 때
+export const getUserByIdOrThrow = async (id: string) => {
+  return prisma.user.findUniqueOrThrow({ where: { id } });
+};
+```
+
+**Read — 목록 조회**
+
+```ts
+// service/getUsers.ts
+import prisma from "@/lib/prisma";
+
+export const getUsers = async (role?: string) => {
+  return prisma.user.findMany({
+    where: role ? { role } : undefined,
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+    },
+  });
+};
+```
+
+**Update**
+
+```ts
+// service/updateUser.ts
+import prisma from "@/lib/prisma";
+
+export const updateUser = async (id: string, data: { name?: string; role?: string }) => {
+  return prisma.user.update({
+    where: { id },
+    data,
+  });
+};
+
+// upsert: 없으면 생성, 있으면 수정
+export const upsertUser = async (email: string, name: string) => {
+  return prisma.user.upsert({
+    where: { email },
+    update: { name },
+    create: { email, name },
+  });
+};
+```
+
+**Delete**
+
+```ts
+// service/deleteUser.ts
+import prisma from "@/lib/prisma";
+
+export const deleteUser = async (id: string) => {
+  return prisma.user.delete({ where: { id } });
+};
+
+// 조건부 일괄 삭제
+export const deleteInactiveUsers = async (before: Date) => {
+  return prisma.user.deleteMany({
+    where: { createdAt: { lt: before } },
+  });
+};
+```
+
+---
+
+### 9-2 관계형 쿼리
+
+**include — 관계 데이터 함께 조회**
+
+```ts
+// User와 연결된 Account 함께 가져오기
+const userWithAccounts = await prisma.user.findUnique({
+  where: { id },
+  include: {
+    accounts: true,
+    sessions: {
+      orderBy: { expires: "desc" },
+      take: 1, // 최신 세션 1개만
+    },
+  },
+});
+```
+
+**중첩 create — 관계 데이터 함께 생성**
+
+```ts
+// 게시글 + 태그 함께 생성 (schema에 Post, Tag 모델이 있을 경우)
+const post = await prisma.post.create({
+  data: {
+    title: "제목",
+    content: "내용",
+    author: {
+      connect: { id: userId }, // 기존 User 연결
+    },
+    tags: {
+      create: [{ name: "Next.js" }, { name: "Prisma" }], // 새 Tag 생성
+    },
+  },
+  include: { tags: true },
+});
+```
+
+**중첩 필터 — 관계 조건으로 부모 조회**
+
+```ts
+// 특정 태그를 가진 게시글 조회
+const posts = await prisma.post.findMany({
+  where: {
+    tags: {
+      some: { name: "Next.js" }, // 태그 중 하나라도 일치
+    },
+    author: {
+      role: "admin", // 작성자 조건
+    },
+  },
+});
+```
+
+---
+
+### 9-3 페이지네이션
+
+**커서 기반 (무한 스크롤 추천)**
+
+```ts
+// service/getPosts.ts
+import prisma from "@/lib/prisma";
+
+export const getPosts = async (cursor?: string, take = 10) => {
+  const posts = await prisma.post.findMany({
+    take: take + 1, // 다음 페이지 존재 여부 확인용 1개 초과 조회
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    orderBy: { createdAt: "desc" },
+    select: { id: true, title: true, createdAt: true },
+  });
+
+  const hasNextPage = posts.length > take;
+  const items = hasNextPage ? posts.slice(0, -1) : posts;
+  const nextCursor = hasNextPage ? items[items.length - 1].id : null;
+
+  return { items, nextCursor, hasNextPage };
+};
+```
+
+**오프셋 기반 (페이지 번호 방식)**
+
+```ts
+export const getPostsByPage = async (page: number, pageSize = 10) => {
+  const skip = (page - 1) * pageSize;
+
+  const [items, total] = await prisma.$transaction([
+    prisma.post.findMany({
+      skip,
+      take: pageSize,
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.post.count(),
+  ]);
+
+  return {
+    items,
+    total,
+    totalPages: Math.ceil(total / pageSize),
+    currentPage: page,
+  };
+};
+```
+
+---
+
+### 9-4 트랜잭션
+
+```ts
+import prisma from "@/lib/prisma";
+
+// 방법 1: $transaction 배열 (원자적 실행, 순서 보장)
+const [updatedUser, newLog] = await prisma.$transaction([
+  prisma.user.update({ where: { id }, data: { role: "admin" } }),
+  prisma.auditLog.create({ data: { userId: id, action: "PROMOTE" } }),
+]);
+
+// 방법 2: 인터랙티브 트랜잭션 (조건부 로직 포함 가능)
+await prisma.$transaction(async (tx) => {
+  const user = await tx.user.findUniqueOrThrow({ where: { id } });
+
+  if (user.role === "admin") {
+    throw new Error("이미 관리자입니다.");
+  }
+
+  await tx.user.update({ where: { id }, data: { role: "admin" } });
+  await tx.auditLog.create({ data: { userId: id, action: "PROMOTE" } });
+});
+```
+
+---
+
+### 9-5 API Route에서 Prisma 사용
+
+```ts
+// app/api/users/[id]/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
+import prisma from "@/lib/prisma";
+
+export const GET = async (_req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
+  const session = await auth();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = await params;
+
+  try {
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { id },
+      select: { id: true, name: true, email: true, role: true },
+    });
+    return NextResponse.json(user);
+  } catch {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+};
+
+export const PATCH = async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
+  const session = await auth();
+  if (!session || session.user.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { id } = await params;
+  const body = await req.json();
+
+  const user = await prisma.user.update({
+    where: { id },
+    data: { name: body.name, role: body.role },
+  });
+
+  return NextResponse.json(user);
+};
+
+export const DELETE = async (
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) => {
+  const session = await auth();
+  if (!session || session.user.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { id } = await params;
+  await prisma.user.delete({ where: { id } });
+
+  return new NextResponse(null, { status: 204 });
+};
+```
+
+---
+
+## 10. 상태 관리 — Zustand
+
+클라이언트 전용 전역 상태 관리입니다. **서버 상태(API 데이터)는 React Query**, **UI·세션·설정 등 클라이언트 상태는 Zustand**로 분리합니다.
+
+### 10-1 기본 스토어 패턴
+
+```ts
+// store/ui.store.ts
+import { create } from "zustand";
+
+interface UiState {
+  isSidebarOpen: boolean;
+  theme: "light" | "dark" | "system";
+  toggleSidebar: () => void;
+  setTheme: (theme: UiState["theme"]) => void;
+  reset: () => void;
+}
+
+const initialState = {
+  isSidebarOpen: false,
+  theme: "system" as const,
+};
+
+export const useUiStore = create<UiState>((set) => ({
+  ...initialState,
+
+  toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
+
+  setTheme: (theme) => set({ theme }),
+
+  reset: () => set(initialState),
+}));
+```
+
+**컴포넌트에서 사용**
+
+```tsx
+"use client";
+
+import { useUiStore } from "@/store/ui.store";
+
+export default function Header() {
+  // 필요한 상태만 구독 (불필요한 리렌더링 방지)
+  const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
+  const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+
+  return (
+    <header>
+      <button onClick={toggleSidebar}>{isSidebarOpen ? "닫기" : "열기"}</button>
+    </header>
+  );
+}
+```
+
+---
+
+### 10-2 비동기 액션 패턴
+
+```ts
+// store/notification.store.ts
+import { create } from "zustand";
+import axiosInstance from "@/lib/axios";
+
+interface Notification {
+  id: string;
+  message: string;
+  read: boolean;
+}
+
+interface NotificationState {
+  notifications: Notification[];
+  unreadCount: number;
+  isLoading: boolean;
+  error: string | null;
+  fetchNotifications: () => Promise<void>;
+  markAsRead: (id: string) => Promise<void>;
+  clearAll: () => void;
+}
+
+export const useNotificationStore = create<NotificationState>((set, get) => ({
+  notifications: [],
+  unreadCount: 0,
+  isLoading: false,
+  error: null,
+
+  fetchNotifications: async () => {
+    set({ isLoading: true, error: null });
+    try {
+      const { data } = await axiosInstance.get<Notification[]>("/notifications");
+      set({
+        notifications: data,
+        unreadCount: data.filter((n) => !n.read).length,
+        isLoading: false,
+      });
+    } catch {
+      set({ error: "알림을 불러오지 못했습니다.", isLoading: false });
+    }
+  },
+
+  markAsRead: async (id) => {
+    await axiosInstance.patch(`/notifications/${id}/read`);
+    set((state) => ({
+      notifications: state.notifications.map((n) => (n.id === id ? { ...n, read: true } : n)),
+      unreadCount: Math.max(0, state.unreadCount - 1),
+    }));
+  },
+
+  clearAll: () => set({ notifications: [], unreadCount: 0 }),
+}));
+```
+
+---
+
+### 10-3 persist 미들웨어 (로컬 저장)
+
+새로고침 후에도 상태를 유지해야 할 때 (장바구니, 다크모드, 최근 검색어 등).
+
+```ts
+// store/cart.store.ts
+import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
+
+interface CartItem {
+  id: string;
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+interface CartState {
+  items: CartItem[];
+  addItem: (item: Omit<CartItem, "quantity">) => void;
+  removeItem: (id: string) => void;
+  updateQuantity: (id: string, quantity: number) => void;
+  clearCart: () => void;
+  totalPrice: () => number;
+}
+
+export const useCartStore = create<CartState>()(
+  persist(
+    (set, get) => ({
+      items: [],
+
+      addItem: (item) =>
+        set((state) => {
+          const existing = state.items.find((i) => i.id === item.id);
+          if (existing) {
+            return {
+              items: state.items.map((i) =>
+                i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
+              ),
+            };
+          }
+          return { items: [...state.items, { ...item, quantity: 1 }] };
+        }),
+
+      removeItem: (id) => set((state) => ({ items: state.items.filter((i) => i.id !== id) })),
+
+      updateQuantity: (id, quantity) =>
+        set((state) => ({
+          items:
+            quantity <= 0
+              ? state.items.filter((i) => i.id !== id)
+              : state.items.map((i) => (i.id === id ? { ...i, quantity } : i)),
+        })),
+
+      clearCart: () => set({ items: [] }),
+
+      totalPrice: () => get().items.reduce((sum, item) => sum + item.price * item.quantity, 0),
+    }),
+    {
+      name: "cart-storage", // localStorage 키 이름
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({ items: state.items }), // 저장할 필드만 선택
+    }
+  )
+);
+```
+
+> **SSR 주의**: `persist`는 클라이언트 전용입니다. 서버 컴포넌트에서 직접 사용하지 말고, `"use client"` 컴포넌트에서만 호출합니다. hydration 불일치 방지를 위해 초기 렌더링에서 `null`을 반환하는 패턴을 사용합니다.
+
+```tsx
+"use client";
+
+import { useCartStore } from "@/store/cart.store";
+import { useEffect, useState } from "react";
+
+export default function CartCount() {
+  const [mounted, setMounted] = useState(false);
+  const items = useCartStore((state) => state.items);
+
+  useEffect(() => setMounted(true), []);
+
+  if (!mounted) return null; // hydration 불일치 방지
+
+  return <span>{items.length}</span>;
+}
+```
+
+---
+
+### 10-4 immer 미들웨어 (불변성 간소화)
+
+중첩 객체 상태를 직접 변경하듯 작성할 수 있습니다.
+
+```bash
+npm install immer
+```
+
+```ts
+// store/editor.store.ts
+import { create } from "zustand";
+import { immer } from "zustand/middleware/immer";
+
+interface Block {
+  id: string;
+  type: "text" | "image" | "video";
+  content: string;
+}
+
+interface EditorState {
+  title: string;
+  blocks: Block[];
+  selectedId: string | null;
+  setTitle: (title: string) => void;
+  addBlock: (block: Block) => void;
+  updateBlock: (id: string, content: string) => void;
+  removeBlock: (id: string) => void;
+  selectBlock: (id: string | null) => void;
+}
+
+export const useEditorStore = create<EditorState>()(
+  immer((set) => ({
+    title: "",
+    blocks: [],
+    selectedId: null,
+
+    setTitle: (title) =>
+      set((state) => {
+        state.title = title; // immer 덕분에 직접 변경 가능
+      }),
+
+    addBlock: (block) =>
+      set((state) => {
+        state.blocks.push(block);
+      }),
+
+    updateBlock: (id, content) =>
+      set((state) => {
+        const block = state.blocks.find((b) => b.id === id);
+        if (block) block.content = content;
+      }),
+
+    removeBlock: (id) =>
+      set((state) => {
+        state.blocks = state.blocks.filter((b) => b.id !== id);
+      }),
+
+    selectBlock: (id) =>
+      set((state) => {
+        state.selectedId = id;
+      }),
+  }))
+);
+```
+
+---
+
+### 10-5 스토어 조합 패턴
+
+여러 스토어를 한 컴포넌트에서 사용할 때 필요한 상태만 구독합니다.
+
+```tsx
+"use client";
+
+import { useUiStore } from "@/store/ui.store";
+import { useCartStore } from "@/store/cart.store";
+import { useSession } from "@/hooks/auth/useSession";
+
+export default function AppHeader() {
+  // 각 스토어에서 필요한 것만 선택 구독
+  const isSidebarOpen = useUiStore((s) => s.isSidebarOpen);
+  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  const cartCount = useCartStore((s) => s.items.length);
+  const { user, isAuthenticated } = useSession();
+
+  return (
+    <header>
+      <button onClick={toggleSidebar}>{isSidebarOpen ? "닫기" : "열기"}</button>
+      <span>장바구니 {cartCount}개</span>
+      {isAuthenticated && <span>{user?.name}</span>}
+    </header>
+  );
+}
+```
+
+**스토어 간 의존성이 필요할 때** — 직접 import 대신 이벤트 기반으로 분리합니다.
+
+```ts
+// store/auth.store.ts
+import { create } from "zustand";
+import { useCartStore } from "./cart.store";
+
+interface AuthState {
+  logout: () => void;
+}
+
+export const useAuthStore = create<AuthState>(() => ({
+  logout: () => {
+    // 로그아웃 시 장바구니도 함께 초기화
+    useCartStore.getState().clearCart();
+  },
+}));
+```
+
+---
+
+### 10-6 React Query와 함께 사용
+
+**원칙**: 서버 데이터는 React Query, UI·사용자 선택·일시적 상태는 Zustand.
+
+```tsx
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { useUiStore } from "@/store/ui.store";
+import axiosInstance from "@/lib/axios";
+
+// 잘못된 패턴 ❌ — API 응답을 Zustand에 저장
+const useProductsWrong = () => {
+  const setProducts = useProductStore((s) => s.setProducts);
+  useEffect(() => {
+    fetch("/api/products")
+      .then((r) => r.json())
+      .then(setProducts);
+  }, []);
+};
+
+// 올바른 패턴 ✅ — 서버 상태는 React Query
+const useProductsWithFilter = () => {
+  const selectedCategory = useUiStore((s) => s.selectedCategory); // Zustand: UI 상태
+
+  return useQuery({
+    queryKey: ["products", selectedCategory],
+    queryFn: async () => {
+      const { data } = await axiosInstance.get("/products", {
+        params: { category: selectedCategory },
+      });
+      return data;
+    },
+  });
+};
+```
+
+**선택 상태와 목록 데이터 분리 예시**
+
+```ts
+// store/product.store.ts — 선택/필터 UI 상태만 관리
+import { create } from "zustand";
+
+interface ProductUiState {
+  selectedCategory: string | null;
+  searchQuery: string;
+  viewMode: "grid" | "list";
+  setCategory: (category: string | null) => void;
+  setSearchQuery: (query: string) => void;
+  setViewMode: (mode: "grid" | "list") => void;
+}
+
+export const useProductStore = create<ProductUiState>((set) => ({
+  selectedCategory: null,
+  searchQuery: "",
+  viewMode: "grid",
+  setCategory: (selectedCategory) => set({ selectedCategory }),
+  setSearchQuery: (searchQuery) => set({ searchQuery }),
+  setViewMode: (viewMode) => set({ viewMode }),
+}));
+```
+
+```tsx
+// components/content/ProductList.tsx
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { useProductStore } from "@/store/product.store";
+import axiosInstance from "@/lib/axios";
+
+export default function ProductList() {
+  const { selectedCategory, searchQuery } = useProductStore();
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["products", selectedCategory, searchQuery],
+    queryFn: async () => {
+      const { data } = await axiosInstance.get("/products", {
+        params: { category: selectedCategory, q: searchQuery },
+      });
+      return data;
+    },
+    staleTime: 1000 * 30, // 30초
+  });
+
+  if (isLoading) return <div>로딩 중...</div>;
+
+  return (
+    <ul>
+      {data?.map((product: { id: string; name: string }) => (
+        <li key={product.id}>{product.name}</li>
+      ))}
+    </ul>
+  );
+}
+```
