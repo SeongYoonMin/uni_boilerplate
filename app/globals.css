@@ -5,6 +5,13 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  /* 반응형 브레이크포인트 */
+  /* 모바일: ~ 767px (기본, no prefix) */
+  /* 태블릿: 768px ~ 1023px (tablet: 또는 md:) */
+  /* PC: 1024px ~ (pc: 또는 lg:) */
+  --breakpoint-tablet: 768px;
+  --breakpoint-pc: 1024px;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
